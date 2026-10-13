@@ -2,7 +2,11 @@ import pandas as pd
 import sys
 
 def categorize(description):
-    desc = description.lower()
+    if pd.isna(description):
+        return "Miscellaneous"
+    desc = str(description).strip().lower()
+    if not desc:
+        return "Miscellaneous"
 
     if any(word in desc for word in ["rent", "lease"]):
         return "Rent"
