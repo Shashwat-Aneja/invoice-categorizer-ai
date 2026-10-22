@@ -24,5 +24,20 @@ class InvoiceCategorizationTests(unittest.TestCase):
         self.assertEqual(categorize("team lunch"), "Miscellaneous")
 
 
+    def test_category_summary_counts_each_category(self):
+        from categorize_invoices import summarize_categories
+
+        frame = pd.DataFrame({"category": ["Rent", "Utilities", "Rent", "Miscellaneous"]})
+        self.assertEqual(
+            summarize_categories(frame),
+            {"Rent": 2, "Utilities": 1, "Miscellaneous": 1},
+        )
+
+    def test_category_summary_requires_category_column(self):
+        from categorize_invoices import summarize_categories
+
+        with self.assertRaisesRegex(ValueError, "category"):
+            summarize_categories(pd.DataFrame({"description": ["Office rent"]}))
+
 if __name__ == "__main__":
     unittest.main()
