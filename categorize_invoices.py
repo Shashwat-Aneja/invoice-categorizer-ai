@@ -25,6 +25,14 @@ def categorize(description):
     return "Miscellaneous"
 
 
+def summarize_categories(df):
+    """Return category counts in descending frequency order."""
+    if "category" not in df.columns:
+        raise ValueError("DataFrame must contain a 'category' column.")
+    counts = df["category"].value_counts(dropna=False)
+    return {str(category): int(count) for category, count in counts.items()}
+
+
 def process_invoice_file(csv_file):
     try:
         df = pd.read_csv(csv_file)
