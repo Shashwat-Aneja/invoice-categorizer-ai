@@ -44,6 +44,9 @@ def process_invoice_file(csv_file):
         df["category"] = df["description"].apply(categorize)
         print("\n===== Invoice Categorization Report =====")
         print(df[["description", "category"]].to_string(index=False))
+        print("\nCategory totals:")
+        for category, count in summarize_categories(df).items():
+            print(f"  {category}: {count}")
         print("=========================================\n")
         return 0
     except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
