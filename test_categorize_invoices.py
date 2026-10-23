@@ -33,6 +33,23 @@ class InvoiceCategorizationTests(unittest.TestCase):
             {"Rent": 2, "Utilities": 1, "Miscellaneous": 1},
         )
 
+    def test_invoice_report_prints_category_totals(self):
+        import tempfile
+        from pathlib import Path
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from categorize_invoices import process_invoice_file
+
+        handle = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False)
+        handle.write("description\nOffice rent\nElectricity bill\nOffice rent\n")
+        handle.close()
+        self.addCleanup(Path(handle.name).unlink, missing_ok=True)
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(process_invoice_file(handle.name), 0)
+        self.assertIn("Rent: 2", output.getvalue())
+        self.assertIn("Utilities: 1", output.getvalue())
+
     def test_category_summary_requires_category_column(self):
         from categorize_invoices import summarize_categories
 
