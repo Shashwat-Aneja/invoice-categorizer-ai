@@ -1,5 +1,6 @@
+import argparse
+from pathlib import Path
 import re
-import sys
 
 import pandas as pd
 
@@ -33,7 +34,7 @@ def summarize_categories(df):
     return {str(category): int(count) for category, count in counts.items()}
 
 
-def process_invoice_file(csv_file):
+def process_invoice_file(csv_file, output_csv=None):
     try:
         df = pd.read_csv(csv_file)
         if "description" not in df.columns:
@@ -42,6 +43,19 @@ def process_invoice_file(csv_file):
 
         df = df.copy()
         df["category"] = df["description"].apply(categorize)
+        if output_csv is not None:
+            source_path = Path(csv_file).expanduser().resolve()
+            output_path = Path(output_csv).expanduser().resolve()
+            if source_path == output_path:
+                print("❌ Output CSV must be different from the source file.")
+                return 1
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                df.to_csv(output_path, index=False)
+            except OSError as exc:
+                print(f"❌ Could not write categorized CSV: {exc}")
+                return 1
+
         print("\n===== Invoice Categorization Report =====")
         print(df[["description", "category"]].to_string(index=False))
         print("\nCategory totals:")
@@ -54,11 +68,16 @@ def process_invoice_file(csv_file):
         return 1
 
 
-def main():
-    if len(sys.argv) != 2:
-        print("Usage: python categorize_invoices.py <csv_file>")
-        return 2
-    return process_invoice_file(sys.argv[1])
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Categorize invoice descriptions from a CSV file.")
+    parser.add_argument("csv_file", help="Input CSV containing a description column")
+    parser.add_argument(
+        "--output",
+        "-o",
+        help="Optional destination CSV containing the original columns and assigned categories",
+    )
+    args = parser.parse_args(argv)
+    return process_invoice_file(args.csv_file, output_csv=args.output)
 
 
 if __name__ == "__main__":
