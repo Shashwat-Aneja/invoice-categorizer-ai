@@ -1,6 +1,6 @@
 import pandas as pd
 
-from categorize_invoices import process_invoice_file
+from categorize_invoices import categorize, process_invoice_file
 
 
 def test_process_invoice_file_exports_categories_without_losing_source_columns(tmp_path):
@@ -28,3 +28,18 @@ def test_export_refuses_to_overwrite_the_input_file(tmp_path, capsys):
 
     assert source.read_text(encoding="utf-8") == original
     assert "different from the source file" in capsys.readouterr().out
+
+
+def test_categorize_recognizes_common_operating_expense_types():
+    cases = {
+        "Airport taxi and hotel": "Travel",
+        "Digital advertising campaign": "Marketing",
+        "Cloud hosting subscription": "Software",
+        "Business insurance premium": "Insurance",
+        "Monthly employee salary": "Payroll",
+        "Supplier invoice": "Vendor Payment",
+        "Broadband internet bill": "Utilities",
+    }
+
+    for description, expected in cases.items():
+        assert categorize(description) == expected
