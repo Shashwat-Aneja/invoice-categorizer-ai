@@ -6,9 +6,14 @@ import pandas as pd
 
 CATEGORY_RULES = (
     ("Rent", re.compile(r"\b(?:rent|lease)\b", re.IGNORECASE)),
-    ("Utilities", re.compile(r"\b(?:electricity|water|utility|utilities|bill)\b", re.IGNORECASE)),
+    ("Utilities", re.compile(r"\b(?:electricity|water|utility|utilities|gas|internet|broadband)\b", re.IGNORECASE)),
     ("Equipment", re.compile(r"\b(?:sensor|laptop|hardware|equipment)\b", re.IGNORECASE)),
-    ("Vendor Payment", re.compile(r"\b(?:invoice|vendor)\b", re.IGNORECASE)),
+    ("Travel", re.compile(r"\b(?:travel|flight|airfare|hotel|taxi|cab|transport|train ticket)\b", re.IGNORECASE)),
+    ("Marketing", re.compile(r"\b(?:marketing|advertising|advertisement|campaign|promotion)\b", re.IGNORECASE)),
+    ("Software", re.compile(r"\b(?:software|subscription|saas|cloud hosting|domain renewal)\b", re.IGNORECASE)),
+    ("Insurance", re.compile(r"\b(?:insurance|premium)\b", re.IGNORECASE)),
+    ("Payroll", re.compile(r"\b(?:salary|payroll|wages|stipend)\b", re.IGNORECASE)),
+    ("Vendor Payment", re.compile(r"\b(?:invoice|vendor|supplier)\b", re.IGNORECASE)),
 )
 
 
