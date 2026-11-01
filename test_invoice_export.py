@@ -43,3 +43,24 @@ def test_categorize_recognizes_common_operating_expense_types():
 
     for description, expected in cases.items():
         assert categorize(description) == expected
+
+def test_export_refuses_to_overwrite_a_hard_link_to_the_source(tmp_path, capsys):
+    import os
+
+    import pytest
+
+    source = tmp_path / "invoices.csv"
+    linked_output = tmp_path / "linked-export.csv"
+    original = "description,amount\\nOffice rent,1200\\n"
+    source.write_text(original, encoding="utf-8")
+    try:
+        os.link(source, linked_output)
+    except (OSError, NotImplementedError):
+        pytest.skip("Hard links are not supported in this environment.")
+
+    assert process_invoice_file(str(source), output_csv=str(linked_output)) == 1
+
+    assert source.read_text(encoding="utf-8") == original
+    assert linked_output.read_text(encoding="utf-8") == original
+    assert "different from the source file" in capsys.readouterr().out
+
