@@ -51,7 +51,14 @@ def process_invoice_file(csv_file, output_csv=None):
         if output_csv is not None:
             source_path = Path(csv_file).expanduser().resolve()
             output_path = Path(output_csv).expanduser().resolve()
-            if source_path == output_path:
+            same_file = source_path == output_path
+            if not same_file and output_path.exists():
+                try:
+                    same_file = source_path.samefile(output_path)
+                except OSError:
+                    # Fail closed when an existing destination cannot be checked.
+                    same_file = True
+            if same_file:
                 print("❌ Output CSV must be different from the source file.")
                 return 1
             output_path.parent.mkdir(parents=True, exist_ok=True)
