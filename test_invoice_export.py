@@ -51,7 +51,7 @@ def test_export_refuses_to_overwrite_a_hard_link_to_the_source(tmp_path, capsys)
 
     source = tmp_path / "invoices.csv"
     linked_output = tmp_path / "linked-export.csv"
-    original = "description,amount\\nOffice rent,1200\\n"
+    original = "description,amount\nOffice rent,1200\n"
     source.write_text(original, encoding="utf-8")
     try:
         os.link(source, linked_output)
@@ -69,8 +69,8 @@ def test_export_refuses_to_overwrite_a_hard_link_to_the_source(tmp_path, capsys)
 def test_failed_export_preserves_existing_destination_and_cleans_temporary_file(tmp_path, monkeypatch, capsys):
     source = tmp_path / "invoices.csv"
     output = tmp_path / "categorized.csv"
-    source.write_text("description,amount\\nOffice rent,1200\\n", encoding="utf-8")
-    output.write_text("previous report\\n", encoding="utf-8")
+    source.write_text("description,amount\nOffice rent,1200\n", encoding="utf-8")
+    output.write_text("previous report\n", encoding="utf-8")
 
     def fail_after_partial_write(_frame, path_or_buf=None, **_kwargs):
         path_or_buf.write("partial csv data")
@@ -80,6 +80,6 @@ def test_failed_export_preserves_existing_destination_and_cleans_temporary_file(
 
     assert process_invoice_file(str(source), output_csv=str(output)) == 1
 
-    assert output.read_text(encoding="utf-8") == "previous report\\n"
+    assert output.read_text(encoding="utf-8") == "previous report\n"
     assert list(tmp_path.glob(f".{output.name}.*.tmp")) == []
     assert "simulated disk write failure" in capsys.readouterr().out
