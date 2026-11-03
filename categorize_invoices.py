@@ -1,6 +1,8 @@
 import argparse
+import os
 from pathlib import Path
 import re
+import tempfile
 
 import pandas as pd
 
@@ -39,6 +41,34 @@ def summarize_categories(df):
     return {str(category): int(count) for category, count in counts.items()}
 
 
+def _write_csv_atomically(df, output_path):
+    """Replace an export only after the complete CSV has been written successfully."""
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            dir=output_path.parent,
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            df.to_csv(temporary_file, index=False)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+
+        os.replace(temporary_path, output_path)
+    except Exception:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
 def process_invoice_file(csv_file, output_csv=None):
     try:
         df = pd.read_csv(csv_file)
@@ -63,7 +93,7 @@ def process_invoice_file(csv_file, output_csv=None):
                 return 1
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                df.to_csv(output_path, index=False)
+                _write_csv_atomically(df, output_path)
             except OSError as exc:
                 print(f"❌ Could not write categorized CSV: {exc}")
                 return 1
