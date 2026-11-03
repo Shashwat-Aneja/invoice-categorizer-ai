@@ -64,3 +64,22 @@ def test_export_refuses_to_overwrite_a_hard_link_to_the_source(tmp_path, capsys)
     assert linked_output.read_text(encoding="utf-8") == original
     assert "different from the source file" in capsys.readouterr().out
 
+
+
+def test_failed_export_preserves_existing_destination_and_cleans_temporary_file(tmp_path, monkeypatch, capsys):
+    source = tmp_path / "invoices.csv"
+    output = tmp_path / "categorized.csv"
+    source.write_text("description,amount\\nOffice rent,1200\\n", encoding="utf-8")
+    output.write_text("previous report\\n", encoding="utf-8")
+
+    def fail_after_partial_write(_frame, path_or_buf=None, **_kwargs):
+        path_or_buf.write("partial csv data")
+        raise OSError("simulated disk write failure")
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", fail_after_partial_write)
+
+    assert process_invoice_file(str(source), output_csv=str(output)) == 1
+
+    assert output.read_text(encoding="utf-8") == "previous report\\n"
+    assert list(tmp_path.glob(f".{output.name}.*.tmp")) == []
+    assert "simulated disk write failure" in capsys.readouterr().out
