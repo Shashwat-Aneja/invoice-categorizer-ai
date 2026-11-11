@@ -91,8 +91,8 @@ def process_invoice_file(csv_file, output_csv=None):
             if same_file:
                 print("❌ Output CSV must be different from the source file.")
                 return 1
-            output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
                 _write_csv_atomically(df, output_path)
             except OSError as exc:
                 print(f"❌ Could not write categorized CSV: {exc}")
