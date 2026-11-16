@@ -105,7 +105,7 @@ def process_invoice_file(csv_file, output_csv=None):
             print(f"  {category}: {count}")
         print("=========================================\n")
         return 0
-    except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError) as exc:
         print(f"❌ Error reading file: {exc}")
         return 1
 
