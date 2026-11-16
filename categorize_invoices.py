@@ -76,6 +76,9 @@ def process_invoice_file(csv_file, output_csv=None):
             print("❌ CSV must contain a 'description' column.")
             return 1
 
+        if df.empty:
+            print("❌ CSV contains no invoice rows.")
+            return 1
         df = df.copy()
         df["category"] = df["description"].apply(categorize)
         if output_csv is not None:
