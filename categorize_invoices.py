@@ -34,6 +34,15 @@ def categorize(description):
     return "Miscellaneous"
 
 
+def explain_category(description):
+    """Expose all matching categories so ambiguous rules can be reviewed."""
+    text = "" if pd.isna(description) else str(description).strip()
+    matches = [category for category, pattern in CATEGORY_RULES if pattern.search(text)]
+    return {"category": matches[0] if matches else "Miscellaneous",
+            "matching_categories": matches,
+            "needs_review": len(matches) != 1}
+
+
 def summarize_categories(df):
     """Return category counts in descending frequency order."""
     if "category" not in df.columns:
@@ -96,7 +105,7 @@ def summarize_category_amounts(df, amount_column="amount"):
     return totals
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False):
     try:
         df = pd.read_csv(csv_file)
         if "description" not in df.columns:
@@ -108,6 +117,10 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None):
             return 1
         df = df.copy()
         df["category"] = df["description"].apply(categorize)
+        if explain:
+            explanations = df["description"].apply(explain_category)
+            df["matching_categories"] = explanations.map(lambda item: "; ".join(item["matching_categories"]))
+            df["needs_review"] = explanations.map(lambda item: item["needs_review"])
         amount_totals = summarize_category_amounts(df, amount_column) if amount_column else []
         if output_csv is not None:
             source_path = Path(csv_file).expanduser().resolve()
@@ -152,8 +165,11 @@ def main(argv=None):
         help="Optional destination CSV containing the original columns and assigned categories",
     )
     parser.add_argument("--amount-column", help="Report category amount totals, separated by currency when present")
+    parser.add_argument("--explain", action="store_true", help="Include matching categories and ambiguity flags in the export")
     args = parser.parse_args(argv)
     options = {"amount_column": args.amount_column} if args.amount_column else {}
+    if args.explain:
+        options["explain"] = True
     return process_invoice_file(args.csv_file, output_csv=args.output, **options)
 
 

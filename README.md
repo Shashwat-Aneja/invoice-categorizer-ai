@@ -68,3 +68,5 @@ invoice-categorizer-ai/
 Developed by **Shashwat Aneja**
 
 Use `--amount-column amount` to report category totals in addition to counts. Totals remain separated by currency when a currency column exists; missing currency metadata is labeled unspecified. Negative amounts are retained as credits/refunds, and non-finite amounts are rejected before export.
+
+`--explain --output categorized.csv` includes all matching rule categories and a `needs_review` flag for unmatched or ambiguous descriptions. The selected category retains the documented rule priority.
