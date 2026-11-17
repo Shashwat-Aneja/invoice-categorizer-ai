@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 from pathlib import Path
 import re
@@ -69,7 +70,33 @@ def _write_csv_atomically(df, output_path):
         raise
 
 
-def process_invoice_file(csv_file, output_csv=None):
+def summarize_category_amounts(df, amount_column="amount"):
+    if amount_column not in df.columns:
+        raise ValueError(f"Amount column {amount_column!r} was not found.")
+    if df[amount_column].map(lambda value: isinstance(value, bool)).any():
+        raise ValueError("Invoice amounts must be numeric, not booleans.")
+    amounts = pd.to_numeric(df[amount_column], errors="coerce")
+    if amounts.isna().any() or not amounts.map(lambda value: math.isfinite(float(value))).all():
+        raise ValueError("Invoice amounts must be finite numeric values.")
+    data = df.copy()
+    data["_amount"] = amounts
+    if "currency" in data.columns:
+        if data["currency"].isna().any() or data["currency"].astype(str).str.strip().eq("").any():
+            raise ValueError("Currency cannot be blank when amount totals are requested.")
+        data["currency"] = data["currency"].astype(str).str.strip().str.upper()
+    else:
+        data["currency"] = "unspecified"
+    totals = []
+    for (category, currency), group in data.groupby(["category", "currency"], sort=True):
+        try:
+            total = math.fsum(float(value) for value in group["_amount"])
+        except OverflowError as exc:
+            raise ValueError("Invoice totals exceed the supported numeric range.") from exc
+        totals.append({"category": category, "currency": currency, "invoice_count": len(group), "total_amount": total})
+    return totals
+
+
+def process_invoice_file(csv_file, output_csv=None, amount_column=None):
     try:
         df = pd.read_csv(csv_file)
         if "description" not in df.columns:
@@ -81,6 +108,7 @@ def process_invoice_file(csv_file, output_csv=None):
             return 1
         df = df.copy()
         df["category"] = df["description"].apply(categorize)
+        amount_totals = summarize_category_amounts(df, amount_column) if amount_column else []
         if output_csv is not None:
             source_path = Path(csv_file).expanduser().resolve()
             output_path = Path(output_csv).expanduser().resolve()
@@ -106,9 +134,11 @@ def process_invoice_file(csv_file, output_csv=None):
         print("\nCategory totals:")
         for category, count in summarize_categories(df).items():
             print(f"  {category}: {count}")
+        for total in amount_totals:
+            print(f"  {total['category']} [{total['currency']}]: {total['total_amount']:.2f}")
         print("=========================================\n")
         return 0
-    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError) as exc:
+    except (OSError, pd.errors.ParserError, ValueError) as exc:
         print(f"❌ Error reading file: {exc}")
         return 1
 
@@ -121,8 +151,10 @@ def main(argv=None):
         "-o",
         help="Optional destination CSV containing the original columns and assigned categories",
     )
+    parser.add_argument("--amount-column", help="Report category amount totals, separated by currency when present")
     args = parser.parse_args(argv)
-    return process_invoice_file(args.csv_file, output_csv=args.output)
+    options = {"amount_column": args.amount_column} if args.amount_column else {}
+    return process_invoice_file(args.csv_file, output_csv=args.output, **options)
 
 
 if __name__ == "__main__":
