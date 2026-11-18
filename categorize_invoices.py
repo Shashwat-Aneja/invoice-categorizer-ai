@@ -1,5 +1,6 @@
 import argparse
 import math
+from decimal import Decimal, InvalidOperation, localcontext
 import os
 from pathlib import Path
 import re
@@ -84,8 +85,11 @@ def summarize_category_amounts(df, amount_column="amount"):
         raise ValueError(f"Amount column {amount_column!r} was not found.")
     if df[amount_column].map(lambda value: isinstance(value, bool)).any():
         raise ValueError("Invoice amounts must be numeric, not booleans.")
-    amounts = pd.to_numeric(df[amount_column], errors="coerce")
-    if amounts.isna().any() or not amounts.map(lambda value: math.isfinite(float(value))).all():
+    try:
+        amounts = df[amount_column].map(lambda value: Decimal(str(value)))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError("Invoice amounts must be finite numeric values.") from exc
+    if not amounts.map(lambda value: value.is_finite() and abs(value.as_tuple().exponent) <= 1000 and len(value.as_tuple().digits) <= 1000 and value.adjusted() <= 308).all():
         raise ValueError("Invoice amounts must be finite numeric values.")
     data = df.copy()
     data["_amount"] = amounts
@@ -97,17 +101,21 @@ def summarize_category_amounts(df, amount_column="amount"):
         data["currency"] = "unspecified"
     totals = []
     for (category, currency), group in data.groupby(["category", "currency"], sort=True):
-        try:
-            total = math.fsum(float(value) for value in group["_amount"])
-        except OverflowError as exc:
-            raise ValueError("Invoice totals exceed the supported numeric range.") from exc
+        # Preserve every input decimal place, including large integer amounts.
+        values = group["_amount"].tolist()
+        precision = max(value.adjusted() for value in values) - min(value.as_tuple().exponent for value in values) + len(str(len(values))) + 3
+        with localcontext() as context:
+            context.prec = max(28, precision)
+            total = sum(values, Decimal(0))
         totals.append({"category": category, "currency": currency, "invoice_count": len(group), "total_amount": total})
     return totals
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20):
     try:
-        df = pd.read_csv(csv_file)
+        if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
+            raise ValueError("max_display_rows must be a positive integer.")
+        df = pd.read_csv(csv_file, dtype={amount_column: "string"} if amount_column else None)
         if "description" not in df.columns:
             print("❌ CSV must contain a 'description' column.")
             return 1
@@ -143,7 +151,9 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
                 return 1
 
         print("\n===== Invoice Categorization Report =====")
-        print(df[["description", "category"]].to_string(index=False))
+        print(df[["description", "category"]].head(max_display_rows).to_string(index=False))
+        if len(df) > max_display_rows:
+            print(f"Showing {max_display_rows} of {len(df)} invoices; exports and totals include every row.")
         print("\nCategory totals:")
         for category, count in summarize_categories(df).items():
             print(f"  {category}: {count}")
@@ -166,8 +176,10 @@ def main(argv=None):
     )
     parser.add_argument("--amount-column", help="Report category amount totals, separated by currency when present")
     parser.add_argument("--explain", action="store_true", help="Include matching categories and ambiguity flags in the export")
+    parser.add_argument("--max-display-rows", type=int, default=20, help="Maximum invoice rows printed; exports remain complete")
     args = parser.parse_args(argv)
     options = {"amount_column": args.amount_column} if args.amount_column else {}
+    options["max_display_rows"] = args.max_display_rows
     if args.explain:
         options["explain"] = True
     return process_invoice_file(args.csv_file, output_csv=args.output, **options)
