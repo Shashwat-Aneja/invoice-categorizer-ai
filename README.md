@@ -72,3 +72,5 @@ Use `--amount-column amount` to report category totals in addition to counts. To
 `--explain --output categorized.csv` includes all matching rule categories and a `needs_review` flag for unmatched or ambiguous descriptions. The selected category retains the documented rule priority.
 
 Amount summaries use decimal arithmetic and preserve CSV amount text during loading, preventing binary floating-point rounding and large-integer precision loss. Returned amount totals are `Decimal` values.
+
+Console previews default to 20 invoice rows. `--max-display-rows N` controls the preview only; CSV exports and category totals still include the complete input.

@@ -111,8 +111,10 @@ def summarize_category_amounts(df, amount_column="amount"):
     return totals
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20):
     try:
+        if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
+            raise ValueError("max_display_rows must be a positive integer.")
         df = pd.read_csv(csv_file, dtype={amount_column: "string"} if amount_column else None)
         if "description" not in df.columns:
             print("❌ CSV must contain a 'description' column.")
@@ -149,7 +151,9 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
                 return 1
 
         print("\n===== Invoice Categorization Report =====")
-        print(df[["description", "category"]].to_string(index=False))
+        print(df[["description", "category"]].head(max_display_rows).to_string(index=False))
+        if len(df) > max_display_rows:
+            print(f"Showing {max_display_rows} of {len(df)} invoices; exports and totals include every row.")
         print("\nCategory totals:")
         for category, count in summarize_categories(df).items():
             print(f"  {category}: {count}")
@@ -172,8 +176,10 @@ def main(argv=None):
     )
     parser.add_argument("--amount-column", help="Report category amount totals, separated by currency when present")
     parser.add_argument("--explain", action="store_true", help="Include matching categories and ambiguity flags in the export")
+    parser.add_argument("--max-display-rows", type=int, default=20, help="Maximum invoice rows printed; exports remain complete")
     args = parser.parse_args(argv)
     options = {"amount_column": args.amount_column} if args.amount_column else {}
+    options["max_display_rows"] = args.max_display_rows
     if args.explain:
         options["explain"] = True
     return process_invoice_file(args.csv_file, output_csv=args.output, **options)
