@@ -127,6 +127,8 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
         if df.empty:
             print("❌ CSV contains no invoice rows.")
             return 1
+        if amount_column in {"category", "matching_categories", "needs_review"}:
+            raise ValueError("Amount column cannot use a generated categorization column name.")
         df = df.copy()
         df["category"] = df["description"].apply(categorize)
         if explain:
