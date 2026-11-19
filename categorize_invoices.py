@@ -164,7 +164,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
         for category, count in summarize_categories(df).items():
             print(f"  {category}: {count}")
         for total in amount_totals:
-            print(f"  {total['category']} [{total['currency']}]: {total['total_amount']:.2f}")
+            print(f"  {total['category']} [{total['currency']}]: {total['total_amount']:f}")
         print("=========================================\n")
         return 0
     except (OSError, pd.errors.ParserError, ValueError) as exc:
