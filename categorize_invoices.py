@@ -81,6 +81,10 @@ def _write_csv_atomically(df, output_path):
 
 
 def summarize_category_amounts(df, amount_column="amount"):
+    if "category" not in df.columns or df.columns.duplicated().any():
+        raise ValueError("Amount totals require unique columns and a category column.")
+    if df["category"].isna().any() or df["category"].astype(str).str.strip().eq("").any():
+        raise ValueError("Invoice categories cannot be blank when totals are requested.")
     if amount_column not in df.columns:
         raise ValueError(f"Amount column {amount_column!r} was not found.")
     if df[amount_column].map(lambda value: isinstance(value, bool)).any():
@@ -123,6 +127,8 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
         if df.empty:
             print("❌ CSV contains no invoice rows.")
             return 1
+        if amount_column in {"category", "matching_categories", "needs_review"}:
+            raise ValueError("Amount column cannot use a generated categorization column name.")
         df = df.copy()
         df["category"] = df["description"].apply(categorize)
         if explain:
@@ -158,7 +164,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
         for category, count in summarize_categories(df).items():
             print(f"  {category}: {count}")
         for total in amount_totals:
-            print(f"  {total['category']} [{total['currency']}]: {total['total_amount']:.2f}")
+            print(f"  {total['category']} [{total['currency']}]: {total['total_amount']:f}")
         print("=========================================\n")
         return 0
     except (OSError, pd.errors.ParserError, ValueError) as exc:
