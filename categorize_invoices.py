@@ -81,6 +81,10 @@ def _write_csv_atomically(df, output_path):
 
 
 def summarize_category_amounts(df, amount_column="amount"):
+    if "category" not in df.columns or df.columns.duplicated().any():
+        raise ValueError("Amount totals require unique columns and a category column.")
+    if df["category"].isna().any() or df["category"].astype(str).str.strip().eq("").any():
+        raise ValueError("Invoice categories cannot be blank when totals are requested.")
     if amount_column not in df.columns:
         raise ValueError(f"Amount column {amount_column!r} was not found.")
     if df[amount_column].map(lambda value: isinstance(value, bool)).any():
