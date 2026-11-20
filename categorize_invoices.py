@@ -1,5 +1,6 @@
 import csv
 import argparse
+import json
 import math
 from decimal import Decimal, InvalidOperation, localcontext
 import os
@@ -125,7 +126,7 @@ def summarize_category_amounts(df, amount_column="amount"):
     return totals
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False):
     try:
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
@@ -167,6 +168,11 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
                 print(f"❌ Could not write categorized CSV: {exc}")
                 return 1
 
+        if json_output:
+            totals = [{**item, "total_amount": format(item["total_amount"], "f")} for item in amount_totals]
+            print(json.dumps({"invoice_count": len(df), "category_counts": summarize_categories(df), "amount_totals": totals}, allow_nan=False))
+            return 0
+
         print("\n===== Invoice Categorization Report =====")
         print(df[["description", "category"]].head(max_display_rows).to_string(index=False))
         if len(df) > max_display_rows:
@@ -194,11 +200,14 @@ def main(argv=None):
     parser.add_argument("--amount-column", help="Report category amount totals, separated by currency when present")
     parser.add_argument("--explain", action="store_true", help="Include matching categories and ambiguity flags in the export")
     parser.add_argument("--max-display-rows", type=int, default=20, help="Maximum invoice rows printed; exports remain complete")
+    parser.add_argument("--json", action="store_true", help="Print counts and exact decimal total strings as JSON on success")
     args = parser.parse_args(argv)
     options = {"amount_column": args.amount_column} if args.amount_column else {}
     options["max_display_rows"] = args.max_display_rows
     if args.explain:
         options["explain"] = True
+    if args.json:
+        options["json_output"] = True
     return process_invoice_file(args.csv_file, output_csv=args.output, **options)
 
 
