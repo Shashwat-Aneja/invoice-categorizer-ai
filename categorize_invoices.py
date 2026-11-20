@@ -1,3 +1,4 @@
+import csv
 import argparse
 import math
 from decimal import Decimal, InvalidOperation, localcontext
@@ -19,6 +20,15 @@ CATEGORY_RULES = (
     ("Payroll", re.compile(r"\b(?:salary|payroll|wages|stipend)\b", re.IGNORECASE)),
     ("Vendor Payment", re.compile(r"\b(?:invoice|vendor|supplier)\b", re.IGNORECASE)),
 )
+
+
+def _reject_duplicate_headers(csv_file):
+    """Do not let pandas silently rename ambiguous source CSV columns."""
+    if isinstance(csv_file, (str, os.PathLike)) and Path(csv_file).is_file():
+        with open(csv_file, encoding="utf-8-sig", newline="") as source:
+            headers = next(csv.reader(source), [])
+        if len(headers) != len(set(headers)):
+            raise ValueError("CSV column names must be unique; duplicate headers are ambiguous.")
 
 
 def categorize(description):
@@ -120,6 +130,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
         df = pd.read_csv(csv_file, dtype={amount_column: "string"} if amount_column else None)
+        _reject_duplicate_headers(csv_file)
         if "description" not in df.columns:
             print("❌ CSV must contain a 'description' column.")
             return 1
