@@ -23,6 +23,15 @@ CATEGORY_RULES = (
 )
 
 
+def escape_csv_formulas(frame):
+    """Escape formula-like text in a copy; leave numeric cells unchanged."""
+    def escape(value):
+        if isinstance(value, str) and value.lstrip(" \t\r\n").startswith(("=", "+", "-", "@")):
+            return "'" + value
+        return value
+    return frame.apply(lambda column: column.map(escape))
+
+
 def _reject_duplicate_headers(csv_file):
     """Do not let pandas silently rename ambiguous source CSV columns."""
     if isinstance(csv_file, (str, os.PathLike)) and Path(csv_file).is_file():
@@ -125,7 +134,7 @@ def summarize_category_amounts(df, amount_column="amount"):
     return totals
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False):
     try:
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
@@ -162,7 +171,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
                 return 1
             try:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                _write_csv_atomically(df, output_path)
+                _write_csv_atomically(escape_csv_formulas(df) if escape_formulas else df, output_path)
             except OSError as exc:
                 print(f"❌ Could not write categorized CSV: {exc}")
                 return 1
@@ -200,6 +209,7 @@ def main(argv=None):
     parser.add_argument("--explain", action="store_true", help="Include matching categories and ambiguity flags in the export")
     parser.add_argument("--max-display-rows", type=int, default=20, help="Maximum invoice rows printed; exports remain complete")
     parser.add_argument("--json", action="store_true", help="Print counts and exact decimal total strings as JSON on success")
+    parser.add_argument("--escape-formulas", action="store_true", help="Prefix formula-like text with an apostrophe in CSV exports; calculations remain unchanged")
     args = parser.parse_args(argv)
     options = {"amount_column": args.amount_column} if args.amount_column else {}
     options["max_display_rows"] = args.max_display_rows
@@ -207,6 +217,8 @@ def main(argv=None):
         options["explain"] = True
     if args.json:
         options["json_output"] = True
+    if args.escape_formulas:
+        options["escape_formulas"] = True
     return process_invoice_file(args.csv_file, output_csv=args.output, **options)
 
 
