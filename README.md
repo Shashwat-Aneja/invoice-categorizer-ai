@@ -76,3 +76,5 @@ Amount summaries use decimal arithmetic and preserve CSV amount text during load
 Console previews default to 20 invoice rows. `--max-display-rows N` controls the preview only; CSV exports and category totals still include the complete input.
 
 Use `--json` to emit complete category counts and optional currency-separated totals. Decimal amounts are JSON strings so downstream tools do not silently lose invoice precision.
+
+Use `--escape-formulas` when CSV exports will be opened in spreadsheet software. Formula-like text cells beginning with `=`, `+`, `-` or `@` after leading whitespace receive an apostrophe; numeric cells and in-memory calculations remain unchanged. The default export preserves original text.
