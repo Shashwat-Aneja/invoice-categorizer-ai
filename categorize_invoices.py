@@ -2,7 +2,7 @@ import csv
 import argparse
 import json
 import math
-from decimal import Decimal, InvalidOperation, localcontext
+from decimal import Context, Decimal, InvalidOperation, localcontext
 import os
 from pathlib import Path
 import re
@@ -119,8 +119,7 @@ def summarize_category_amounts(df, amount_column="amount"):
         # Preserve every input decimal place, including large integer amounts.
         values = group["_amount"].tolist()
         precision = max(value.adjusted() for value in values) - min(value.as_tuple().exponent for value in values) + len(str(len(values))) + 3
-        with localcontext() as context:
-            context.prec = max(28, precision)
+        with localcontext(Context(prec=max(28, precision), Emin=-999999, Emax=999999)) as context:
             total = sum(values, Decimal(0))
         totals.append({"category": category, "currency": currency, "invoice_count": len(group), "total_amount": total})
     return totals
