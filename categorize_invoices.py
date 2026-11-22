@@ -1,5 +1,6 @@
 import csv
 import argparse
+from numbers import Number
 import json
 import math
 from decimal import Context, Decimal, InvalidOperation, localcontext
@@ -142,7 +143,48 @@ def summarize_category_amounts(df, amount_column="amount"):
     return totals
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=","):
+def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None):
+    if date_column is None:
+        if start_date is not None or end_date is not None:
+            raise ValueError("A date_column is required for invoice date filters.")
+        return frame
+    if date_column not in frame.columns:
+        raise ValueError("Invoice date column was not found.")
+    if frame[date_column].map(lambda value: isinstance(value, Number)).any():
+        raise ValueError("Invoice dates must be calendar dates, not numeric offsets.")
+    parsed = frame[date_column].map(lambda value: pd.to_datetime(value, errors="coerce"))
+    if parsed.isna().any():
+        raise ValueError("Invoice dates must be valid calendar dates.")
+    dates = parsed.map(lambda value: value.date())
+    bounds = []
+    for value in (start_date, end_date):
+        if value is None:
+            bounds.append(None)
+            continue
+        if isinstance(value, Number):
+            raise ValueError("Invoice date bounds must be calendar dates.")
+        try:
+            bound = pd.Timestamp(value)
+            if pd.isna(bound):
+                raise ValueError("Missing date bound")
+            bounds.append(bound.date())
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invoice date bounds must be valid calendar dates.") from exc
+    start, end = bounds
+    if start is not None and end is not None and start > end:
+        raise ValueError("Invoice start date must not follow the end date.")
+    mask = pd.Series(True, index=frame.index)
+    if start is not None:
+        mask &= dates >= start
+    if end is not None:
+        mask &= dates <= end
+    result = frame.loc[mask].copy()
+    if result.empty:
+        raise ValueError("No invoices fall within the selected calendar dates.")
+    return result
+
+
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None):
     try:
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
@@ -154,6 +196,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
         if df.empty:
             print("❌ CSV contains no invoice rows.")
             return 1
+        df = filter_invoice_dates(df, date_column, start_date, end_date)
         if amount_column in {"category", "matching_categories", "needs_review"}:
             raise ValueError("Amount column cannot use a generated categorization column name.")
         df = df.copy()
@@ -218,10 +261,16 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="Print counts and exact decimal total strings as JSON on success")
     parser.add_argument("--escape-formulas", action="store_true", help="Prefix formula-like text with an apostrophe in CSV exports; calculations remain unchanged")
     parser.add_argument("--delimiter", choices=(",", ";", "tab", "|"), default=",", help="Input CSV delimiter; exports remain comma-separated")
+    parser.add_argument("--date-column", help="Source calendar-date column for optional inclusive date filters")
+    parser.add_argument("--start-date", help="Inclusive starting calendar date")
+    parser.add_argument("--end-date", help="Inclusive ending calendar date")
     args = parser.parse_args(argv)
     delimiter = "\t" if args.delimiter == "tab" else args.delimiter
     options = {"amount_column": args.amount_column} if args.amount_column else {}
     options["max_display_rows"] = args.max_display_rows
+    for key in ("date_column", "start_date", "end_date"):
+        if getattr(args, key) is not None:
+            options[key] = getattr(args, key)
     if args.explain:
         options["explain"] = True
     if args.json:

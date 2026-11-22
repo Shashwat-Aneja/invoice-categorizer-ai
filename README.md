@@ -80,3 +80,5 @@ Use `--json` to emit complete category counts and optional currency-separated to
 Use `--escape-formulas` when CSV exports will be opened in spreadsheet software. Formula-like text cells beginning with `=`, `+`, `-` or `@` after leading whitespace receive an apostrophe; numeric cells and in-memory calculations remain unchanged. The default export preserves original text.
 
 `--delimiter ";"`, `--delimiter tab` and `--delimiter "|"` support alternate input CSV separators, including quoted fields. Duplicate-header validation uses the selected separator. The default input and all CSV exports remain comma-separated.
+
+`--date-column date --start-date 2026-01-01 --end-date 2026-01-31` selects inclusive local calendar dates before categorization, totals and exports. Missing/invalid dates and empty selections fail explicitly; the default remains all rows. Numeric epoch offsets are not accepted as calendar dates.
