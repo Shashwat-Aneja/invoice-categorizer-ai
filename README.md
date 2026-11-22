@@ -78,3 +78,9 @@ Console previews default to 20 invoice rows. `--max-display-rows N` controls the
 Use `--json` to emit complete category counts and optional currency-separated totals. Decimal amounts are JSON strings so downstream tools do not silently lose invoice precision.
 
 Use `--escape-formulas` when CSV exports will be opened in spreadsheet software. Formula-like text cells beginning with `=`, `+`, `-` or `@` after leading whitespace receive an apostrophe; numeric cells and in-memory calculations remain unchanged. The default export preserves original text.
+
+`--delimiter ";"`, `--delimiter tab` and `--delimiter "|"` support alternate input CSV separators, including quoted fields. Duplicate-header validation uses the selected separator. The default input and all CSV exports remain comma-separated.
+
+`--date-column date --start-date 2026-01-01 --end-date 2026-01-31` selects inclusive local calendar dates before categorization, totals and exports. Missing/invalid dates and empty selections fail explicitly; the default remains all rows. Numeric epoch offsets are not accepted as calendar dates.
+
+`--review-output review.csv` exports ambiguous and unmatched descriptions with explanation columns for manual triage. Optional complete exports retain all selected invoices. The review file cannot alias the source or complete export and follows `--escape-formulas`. Each output is atomic individually; multiple output files are not a single transaction.

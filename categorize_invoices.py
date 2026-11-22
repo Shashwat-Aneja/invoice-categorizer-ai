@@ -1,5 +1,6 @@
 import csv
 import argparse
+from numbers import Number
 import json
 import math
 from decimal import Context, Decimal, InvalidOperation, localcontext
@@ -23,6 +24,14 @@ CATEGORY_RULES = (
 )
 
 
+def _read_csv_input(csv_file, delimiter=",", **options):
+    if delimiter not in (",", ";", "\t", "|"):
+        raise ValueError("Unsupported input delimiter.")
+    frame = pd.read_csv(csv_file, **options, **({"sep": delimiter} if delimiter != "," else {}))
+    _reject_duplicate_headers(csv_file, delimiter)
+    return frame
+
+
 def escape_csv_formulas(frame):
     """Escape formula-like text in a copy; leave numeric cells unchanged."""
     def escape(value):
@@ -32,11 +41,11 @@ def escape_csv_formulas(frame):
     return frame.apply(lambda column: column.map(escape))
 
 
-def _reject_duplicate_headers(csv_file):
+def _reject_duplicate_headers(csv_file, delimiter=","):
     """Do not let pandas silently rename ambiguous source CSV columns."""
     if isinstance(csv_file, (str, os.PathLike)) and Path(csv_file).is_file():
         with open(csv_file, encoding="utf-8-sig", newline="") as source:
-            headers = next(csv.reader(source), [])
+            headers = next(csv.reader(source, delimiter=delimiter), [])
         if len(headers) != len(set(headers)):
             raise ValueError("CSV column names must be unique; duplicate headers are ambiguous.")
 
@@ -134,12 +143,52 @@ def summarize_category_amounts(df, amount_column="amount"):
     return totals
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False):
+def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None):
+    if date_column is None:
+        if start_date is not None or end_date is not None:
+            raise ValueError("A date_column is required for invoice date filters.")
+        return frame
+    if date_column not in frame.columns:
+        raise ValueError("Invoice date column was not found.")
+    if frame[date_column].map(lambda value: isinstance(value, Number)).any():
+        raise ValueError("Invoice dates must be calendar dates, not numeric offsets.")
+    parsed = frame[date_column].map(lambda value: pd.to_datetime(value, errors="coerce"))
+    if parsed.isna().any():
+        raise ValueError("Invoice dates must be valid calendar dates.")
+    dates = parsed.map(lambda value: value.date())
+    bounds = []
+    for value in (start_date, end_date):
+        if value is None:
+            bounds.append(None)
+            continue
+        if isinstance(value, Number):
+            raise ValueError("Invoice date bounds must be calendar dates.")
+        try:
+            bound = pd.Timestamp(value)
+            if pd.isna(bound):
+                raise ValueError("Missing date bound")
+            bounds.append(bound.date())
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invoice date bounds must be valid calendar dates.") from exc
+    start, end = bounds
+    if start is not None and end is not None and start > end:
+        raise ValueError("Invoice start date must not follow the end date.")
+    mask = pd.Series(True, index=frame.index)
+    if start is not None:
+        mask &= dates >= start
+    if end is not None:
+        mask &= dates <= end
+    result = frame.loc[mask].copy()
+    if result.empty:
+        raise ValueError("No invoices fall within the selected calendar dates.")
+    return result
+
+
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None):
     try:
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
-        df = pd.read_csv(csv_file, dtype={amount_column: "string"} if amount_column else None)
-        _reject_duplicate_headers(csv_file)
+        df = _read_csv_input(csv_file, delimiter, dtype={amount_column: "string"} if amount_column else None)
         if "description" not in df.columns:
             print("❌ CSV must contain a 'description' column.")
             return 1
@@ -147,15 +196,21 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
         if df.empty:
             print("❌ CSV contains no invoice rows.")
             return 1
+        df = filter_invoice_dates(df, date_column, start_date, end_date)
         if amount_column in {"category", "matching_categories", "needs_review"}:
             raise ValueError("Amount column cannot use a generated categorization column name.")
         df = df.copy()
         df["category"] = df["description"].apply(categorize)
-        if explain:
+        if explain or review_csv is not None:
             explanations = df["description"].apply(explain_category)
             df["matching_categories"] = explanations.map(lambda item: "; ".join(item["matching_categories"]))
             df["needs_review"] = explanations.map(lambda item: item["needs_review"])
         amount_totals = summarize_category_amounts(df, amount_column) if amount_column else []
+        review_path = Path(review_csv).expanduser().resolve() if review_csv is not None else None
+        if review_path is not None:
+            protected = [Path(csv_file).expanduser().resolve()] + ([Path(output_csv).expanduser().resolve()] if output_csv is not None else [])
+            if any(review_path == path or (review_path.exists() and path.exists() and review_path.samefile(path)) for path in protected):
+                raise ValueError("Review CSV must differ from the source and complete export.")
         if output_csv is not None:
             source_path = Path(csv_file).expanduser().resolve()
             output_path = Path(output_csv).expanduser().resolve()
@@ -175,6 +230,11 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             except OSError as exc:
                 print(f"❌ Could not write categorized CSV: {exc}")
                 return 1
+
+        if review_path is not None:
+            review_path.parent.mkdir(parents=True, exist_ok=True)
+            review = df.loc[df["needs_review"]].copy()
+            _write_csv_atomically(escape_csv_formulas(review) if escape_formulas else review, review_path)
 
         if json_output:
             totals = [{**item, "total_amount": format(item["total_amount"], "f")} for item in amount_totals]
@@ -210,15 +270,28 @@ def main(argv=None):
     parser.add_argument("--max-display-rows", type=int, default=20, help="Maximum invoice rows printed; exports remain complete")
     parser.add_argument("--json", action="store_true", help="Print counts and exact decimal total strings as JSON on success")
     parser.add_argument("--escape-formulas", action="store_true", help="Prefix formula-like text with an apostrophe in CSV exports; calculations remain unchanged")
+    parser.add_argument("--delimiter", choices=(",", ";", "tab", "|"), default=",", help="Input CSV delimiter; exports remain comma-separated")
+    parser.add_argument("--date-column", help="Source calendar-date column for optional inclusive date filters")
+    parser.add_argument("--start-date", help="Inclusive starting calendar date")
+    parser.add_argument("--end-date", help="Inclusive ending calendar date")
+    parser.add_argument("--review-output", help="Atomically export only ambiguous or unmatched invoices for manual review")
     args = parser.parse_args(argv)
+    delimiter = "\t" if args.delimiter == "tab" else args.delimiter
     options = {"amount_column": args.amount_column} if args.amount_column else {}
     options["max_display_rows"] = args.max_display_rows
+    if args.review_output is not None:
+        options["review_csv"] = args.review_output
+    for key in ("date_column", "start_date", "end_date"):
+        if getattr(args, key) is not None:
+            options[key] = getattr(args, key)
     if args.explain:
         options["explain"] = True
     if args.json:
         options["json_output"] = True
     if args.escape_formulas:
         options["escape_formulas"] = True
+    if delimiter != ",":
+        options["delimiter"] = delimiter
     return process_invoice_file(args.csv_file, output_csv=args.output, **options)
 
 
