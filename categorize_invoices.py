@@ -23,6 +23,14 @@ CATEGORY_RULES = (
 )
 
 
+def _read_csv_input(csv_file, delimiter=",", **options):
+    if delimiter not in (",", ";", "\t", "|"):
+        raise ValueError("Unsupported input delimiter.")
+    frame = pd.read_csv(csv_file, **options, **({"sep": delimiter} if delimiter != "," else {}))
+    _reject_duplicate_headers(csv_file, delimiter)
+    return frame
+
+
 def escape_csv_formulas(frame):
     """Escape formula-like text in a copy; leave numeric cells unchanged."""
     def escape(value):
@@ -32,11 +40,11 @@ def escape_csv_formulas(frame):
     return frame.apply(lambda column: column.map(escape))
 
 
-def _reject_duplicate_headers(csv_file):
+def _reject_duplicate_headers(csv_file, delimiter=","):
     """Do not let pandas silently rename ambiguous source CSV columns."""
     if isinstance(csv_file, (str, os.PathLike)) and Path(csv_file).is_file():
         with open(csv_file, encoding="utf-8-sig", newline="") as source:
-            headers = next(csv.reader(source), [])
+            headers = next(csv.reader(source, delimiter=delimiter), [])
         if len(headers) != len(set(headers)):
             raise ValueError("CSV column names must be unique; duplicate headers are ambiguous.")
 
@@ -134,12 +142,11 @@ def summarize_category_amounts(df, amount_column="amount"):
     return totals
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=","):
     try:
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
-        df = pd.read_csv(csv_file, dtype={amount_column: "string"} if amount_column else None)
-        _reject_duplicate_headers(csv_file)
+        df = _read_csv_input(csv_file, delimiter, dtype={amount_column: "string"} if amount_column else None)
         if "description" not in df.columns:
             print("❌ CSV must contain a 'description' column.")
             return 1
@@ -210,7 +217,9 @@ def main(argv=None):
     parser.add_argument("--max-display-rows", type=int, default=20, help="Maximum invoice rows printed; exports remain complete")
     parser.add_argument("--json", action="store_true", help="Print counts and exact decimal total strings as JSON on success")
     parser.add_argument("--escape-formulas", action="store_true", help="Prefix formula-like text with an apostrophe in CSV exports; calculations remain unchanged")
+    parser.add_argument("--delimiter", choices=(",", ";", "tab", "|"), default=",", help="Input CSV delimiter; exports remain comma-separated")
     args = parser.parse_args(argv)
+    delimiter = "\t" if args.delimiter == "tab" else args.delimiter
     options = {"amount_column": args.amount_column} if args.amount_column else {}
     options["max_display_rows"] = args.max_display_rows
     if args.explain:
@@ -219,6 +228,8 @@ def main(argv=None):
         options["json_output"] = True
     if args.escape_formulas:
         options["escape_formulas"] = True
+    if delimiter != ",":
+        options["delimiter"] = delimiter
     return process_invoice_file(args.csv_file, output_csv=args.output, **options)
 
 
