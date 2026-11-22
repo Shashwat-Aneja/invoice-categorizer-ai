@@ -184,7 +184,7 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None):
     try:
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
@@ -201,11 +201,16 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             raise ValueError("Amount column cannot use a generated categorization column name.")
         df = df.copy()
         df["category"] = df["description"].apply(categorize)
-        if explain:
+        if explain or review_csv is not None:
             explanations = df["description"].apply(explain_category)
             df["matching_categories"] = explanations.map(lambda item: "; ".join(item["matching_categories"]))
             df["needs_review"] = explanations.map(lambda item: item["needs_review"])
         amount_totals = summarize_category_amounts(df, amount_column) if amount_column else []
+        review_path = Path(review_csv).expanduser().resolve() if review_csv is not None else None
+        if review_path is not None:
+            protected = [Path(csv_file).expanduser().resolve()] + ([Path(output_csv).expanduser().resolve()] if output_csv is not None else [])
+            if any(review_path == path or (review_path.exists() and path.exists() and review_path.samefile(path)) for path in protected):
+                raise ValueError("Review CSV must differ from the source and complete export.")
         if output_csv is not None:
             source_path = Path(csv_file).expanduser().resolve()
             output_path = Path(output_csv).expanduser().resolve()
@@ -225,6 +230,11 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             except OSError as exc:
                 print(f"❌ Could not write categorized CSV: {exc}")
                 return 1
+
+        if review_path is not None:
+            review_path.parent.mkdir(parents=True, exist_ok=True)
+            review = df.loc[df["needs_review"]].copy()
+            _write_csv_atomically(escape_csv_formulas(review) if escape_formulas else review, review_path)
 
         if json_output:
             totals = [{**item, "total_amount": format(item["total_amount"], "f")} for item in amount_totals]
@@ -264,10 +274,13 @@ def main(argv=None):
     parser.add_argument("--date-column", help="Source calendar-date column for optional inclusive date filters")
     parser.add_argument("--start-date", help="Inclusive starting calendar date")
     parser.add_argument("--end-date", help="Inclusive ending calendar date")
+    parser.add_argument("--review-output", help="Atomically export only ambiguous or unmatched invoices for manual review")
     args = parser.parse_args(argv)
     delimiter = "\t" if args.delimiter == "tab" else args.delimiter
     options = {"amount_column": args.amount_column} if args.amount_column else {}
     options["max_display_rows"] = args.max_display_rows
+    if args.review_output is not None:
+        options["review_csv"] = args.review_output
     for key in ("date_column", "start_date", "end_date"):
         if getattr(args, key) is not None:
             options[key] = getattr(args, key)
