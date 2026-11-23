@@ -84,3 +84,5 @@ Use `--escape-formulas` when CSV exports will be opened in spreadsheet software.
 `--date-column date --start-date 2026-01-01 --end-date 2026-01-31` selects inclusive local calendar dates before categorization, totals and exports. Missing/invalid dates and empty selections fail explicitly; the default remains all rows. Numeric epoch offsets are not accepted as calendar dates.
 
 `--review-output review.csv` exports ambiguous and unmatched descriptions with explanation columns for manual triage. Optional complete exports retain all selected invoices. The review file cannot alias the source or complete export and follows `--escape-formulas`. Each output is atomic individually; multiple output files are not a single transaction.
+
+Seekable caller-owned text and UTF-8 binary CSV streams now receive the same duplicate-header checks as file paths, before pandas can rename ambiguous columns. Validation restores the starting position and leaves caller streams open; nonseekable stream objects are rejected explicitly.
