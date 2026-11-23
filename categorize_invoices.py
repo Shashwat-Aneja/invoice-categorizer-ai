@@ -100,7 +100,41 @@ def _reject_duplicate_headers(csv_file, delimiter=","):
         raise ValueError("CSV column names must be unique; duplicate headers are ambiguous.")
 
 
-def categorize(description):
+def build_category_rules(custom_rules=None):
+    if custom_rules is None:
+        return CATEGORY_RULES
+    if not isinstance(custom_rules, dict) or len(custom_rules) > 100:
+        raise ValueError("Custom rules must be an object with at most 100 categories.")
+    compiled = []
+    count = 0
+    for category, keywords in custom_rules.items():
+        if not isinstance(category, str) or not category.strip() or len(category) > 100 or not isinstance(keywords, list) or not keywords:
+            raise ValueError("Custom categories need a non-empty name and keyword list.")
+        if any(not isinstance(word, str) or not word.strip() or len(word) > 100 for word in keywords):
+            raise ValueError("Custom keywords must be non-empty strings of at most 100 characters.")
+        count += len(keywords)
+        if count > 1000:
+            raise ValueError("Custom rules cannot exceed 1000 keywords.")
+        pattern = r"(?<!\w)(?:" + "|".join(re.escape(word.strip()) for word in keywords) + r")(?!\w)"
+        compiled.append((category.strip(), re.compile(pattern, re.IGNORECASE)))
+    return tuple(compiled) + CATEGORY_RULES
+
+
+def load_custom_rules(path):
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Custom rule JSON contains a duplicate category.")
+            result[key] = value
+        return result
+    with Path(path).expanduser().open(encoding="utf-8") as source:
+        rules = json.load(source, object_pairs_hook=unique_object)
+    build_category_rules(rules)
+    return rules
+
+
+def categorize(description, rules=None):
     """Map an invoice description to a stable business expense category."""
     if pd.isna(description):
         return "Miscellaneous"
@@ -108,16 +142,16 @@ def categorize(description):
     if not desc:
         return "Miscellaneous"
 
-    for category, pattern in CATEGORY_RULES:
+    for category, pattern in (CATEGORY_RULES if rules is None else rules):
         if pattern.search(desc):
             return category
     return "Miscellaneous"
 
 
-def explain_category(description):
+def explain_category(description, rules=None):
     """Expose all matching categories so ambiguous rules can be reviewed."""
     text = "" if pd.isna(description) else str(description).strip()
-    matches = [category for category, pattern in CATEGORY_RULES if pattern.search(text)]
+    matches = list(dict.fromkeys(category for category, pattern in (CATEGORY_RULES if rules is None else rules) if pattern.search(text)))
     return {"category": matches[0] if matches else "Miscellaneous",
             "matching_categories": matches,
             "needs_review": len(matches) != 1}
@@ -234,8 +268,9 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None):
     try:
+        rules = build_category_rules(custom_rules)
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
         df = _read_csv_input(csv_file, delimiter, dtype={amount_column: "string"} if amount_column else None)
@@ -250,9 +285,9 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
         if amount_column in {"category", "matching_categories", "needs_review"}:
             raise ValueError("Amount column cannot use a generated categorization column name.")
         df = df.copy()
-        df["category"] = df["description"].apply(categorize)
+        df["category"] = df["description"].apply(lambda description: categorize(description, rules))
         if explain or review_csv is not None:
-            explanations = df["description"].apply(explain_category)
+            explanations = df["description"].apply(lambda description: explain_category(description, rules))
             df["matching_categories"] = explanations.map(lambda item: "; ".join(item["matching_categories"]))
             df["needs_review"] = explanations.map(lambda item: item["needs_review"])
         amount_totals = summarize_category_amounts(df, amount_column) if amount_column else []
@@ -325,10 +360,16 @@ def main(argv=None):
     parser.add_argument("--start-date", help="Inclusive starting calendar date")
     parser.add_argument("--end-date", help="Inclusive ending calendar date")
     parser.add_argument("--review-output", help="Atomically export only ambiguous or unmatched invoices for manual review")
+    parser.add_argument("--rules-json", help="JSON object mapping custom category names to literal keyword lists; custom rules precede built-ins")
     args = parser.parse_args(argv)
     delimiter = "\t" if args.delimiter == "tab" else args.delimiter
     options = {"amount_column": args.amount_column} if args.amount_column else {}
     options["max_display_rows"] = args.max_display_rows
+    if args.rules_json:
+        try:
+            options["custom_rules"] = load_custom_rules(args.rules_json)
+        except (OSError, ValueError) as exc:
+            parser.error(f"Invalid custom rule file: {exc}")
     if args.review_output is not None:
         options["review_csv"] = args.review_output
     for key in ("date_column", "start_date", "end_date"):

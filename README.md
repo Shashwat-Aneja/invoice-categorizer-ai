@@ -86,3 +86,5 @@ Use `--escape-formulas` when CSV exports will be opened in spreadsheet software.
 `--review-output review.csv` exports ambiguous and unmatched descriptions with explanation columns for manual triage. Optional complete exports retain all selected invoices. The review file cannot alias the source or complete export and follows `--escape-formulas`. Each output is atomic individually; multiple output files are not a single transaction.
 
 Seekable caller-owned text and UTF-8 binary CSV streams now receive the same duplicate-header checks as file paths, before pandas can rename ambiguous columns. Validation restores the starting position and leaves caller streams open; nonseekable stream objects are rejected explicitly.
+
+`--rules-json rules.json` loads custom category-to-keyword lists, matched literally with word-edge checks before built-in fallbacks. Custom rules are bounded to 100 categories and 1,000 keywords of at most 100 characters. JSON duplicate categories are rejected; explanations report distinct matching categories, including any built-in ambiguity.
