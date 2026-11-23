@@ -268,12 +268,20 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None):
     try:
         rules = build_category_rules(custom_rules)
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
-        df = _read_csv_input(csv_file, delimiter, dtype={amount_column: "string"} if amount_column else None)
+        if id_column is not None and (not isinstance(id_column, str) or not id_column.strip() or id_column in {amount_column, "category", "matching_categories", "needs_review"}):
+            raise ValueError("Invoice ID column must be a distinct source identifier column.")
+        dtypes = {amount_column: "string"} if amount_column else {}
+        converters = {id_column: lambda value: "__id__" + value} if id_column is not None else None
+        df = _read_csv_input(csv_file, delimiter, dtype=dtypes or None, converters=converters)
+        if id_column is not None and id_column in df.columns:
+            # Some pandas versions recognize NA after applying converters.
+            # A temporary prefix protects literal IDs; it never leaves parsing.
+            df[id_column] = df[id_column].astype("string").str.slice(6)
         if "description" not in df.columns:
             print("❌ CSV must contain a 'description' column.")
             return 1
@@ -282,6 +290,12 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             print("❌ CSV contains no invoice rows.")
             return 1
         df = filter_invoice_dates(df, date_column, start_date, end_date)
+        if id_column is not None:
+            if id_column not in df.columns:
+                raise ValueError("Invoice ID column was not found.")
+            identifiers = df[id_column].str.strip()
+            if identifiers.isna().any() or identifiers.eq("").any() or identifiers.duplicated().any():
+                raise ValueError("Selected invoice IDs must be non-empty and unique.")
         if amount_column in {"category", "matching_categories", "needs_review"}:
             raise ValueError("Amount column cannot use a generated categorization column name.")
         df = df.copy()
@@ -361,10 +375,13 @@ def main(argv=None):
     parser.add_argument("--end-date", help="Inclusive ending calendar date")
     parser.add_argument("--review-output", help="Atomically export only ambiguous or unmatched invoices for manual review")
     parser.add_argument("--rules-json", help="JSON object mapping custom category names to literal keyword lists; custom rules precede built-ins")
+    parser.add_argument("--id-column", help="Validate unique non-empty identifiers in selected invoices and preserve leading zeros")
     args = parser.parse_args(argv)
     delimiter = "\t" if args.delimiter == "tab" else args.delimiter
     options = {"amount_column": args.amount_column} if args.amount_column else {}
     options["max_display_rows"] = args.max_display_rows
+    if args.id_column is not None:
+        options["id_column"] = args.id_column
     if args.rules_json:
         try:
             options["custom_rules"] = load_custom_rules(args.rules_json)

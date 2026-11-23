@@ -88,3 +88,5 @@ Use `--escape-formulas` when CSV exports will be opened in spreadsheet software.
 Seekable caller-owned text and UTF-8 binary CSV streams now receive the same duplicate-header checks as file paths, before pandas can rename ambiguous columns. Validation restores the starting position and leaves caller streams open; nonseekable stream objects are rejected explicitly.
 
 `--rules-json rules.json` loads custom category-to-keyword lists, matched literally with word-edge checks before built-in fallbacks. Custom rules are bounded to 100 categories and 1,000 keywords of at most 100 characters. JSON duplicate categories are rejected; explanations report distinct matching categories, including any built-in ambiguity.
+
+`--id-column invoice_id` validates non-empty unique IDs after optional date selection and before exports. IDs are read as text to preserve leading zeros; surrounding whitespace is ignored for uniqueness checks. Duplicate rows are rejected, never silently dropped.
