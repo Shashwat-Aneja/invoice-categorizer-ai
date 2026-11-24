@@ -110,7 +110,11 @@ def _reject_duplicate_headers(csv_file, delimiter=","):
         raise ValueError("CSV column names must be unique; duplicate headers are ambiguous.")
 
 
-def build_category_rules(custom_rules=None):
+def build_category_rules(custom_rules=None, include_defaults=True):
+    if not isinstance(include_defaults, bool):
+        raise ValueError("include_defaults must be a boolean.")
+    if not include_defaults and not custom_rules:
+        raise ValueError("Custom-only categorization requires non-empty custom rules.")
     if custom_rules is None:
         return CATEGORY_RULES
     if not isinstance(custom_rules, dict) or len(custom_rules) > 100:
@@ -127,7 +131,7 @@ def build_category_rules(custom_rules=None):
             raise ValueError("Custom rules cannot exceed 1000 keywords.")
         pattern = r"(?<!\w)(?:" + "|".join(re.escape(word.strip()) for word in keywords) + r")(?!\w)"
         compiled.append((category.strip(), re.compile(pattern, re.IGNORECASE)))
-    return tuple(compiled) + CATEGORY_RULES
+    return tuple(compiled) + (CATEGORY_RULES if include_defaults else ())
 
 
 def load_custom_rules(path):
@@ -278,9 +282,11 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False):
     try:
-        rules = build_category_rules(custom_rules)
+        if not isinstance(custom_rules_only, bool):
+            raise ValueError("custom_rules_only must be a boolean.")
+        rules = build_category_rules(custom_rules, include_defaults=not custom_rules_only)
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
         if id_column is not None and (not isinstance(id_column, str) or not id_column.strip() or id_column in {amount_column, "category", "matching_categories", "needs_review"}):
@@ -386,10 +392,15 @@ def main(argv=None):
     parser.add_argument("--review-output", help="Atomically export only ambiguous or unmatched invoices for manual review")
     parser.add_argument("--rules-json", help="JSON object mapping custom category names to literal keyword lists; custom rules precede built-ins")
     parser.add_argument("--id-column", help="Validate unique non-empty identifiers in selected invoices and preserve leading zeros")
+    parser.add_argument("--custom-rules-only", action="store_true", help="Use only the categories from --rules-json, with unmatched descriptions Miscellaneous")
     args = parser.parse_args(argv)
+    if args.custom_rules_only and not args.rules_json:
+        parser.error("--custom-rules-only requires --rules-json")
     delimiter = "\t" if args.delimiter == "tab" else args.delimiter
     options = {"amount_column": args.amount_column} if args.amount_column else {}
     options["max_display_rows"] = args.max_display_rows
+    if args.custom_rules_only:
+        options["custom_rules_only"] = True
     if args.id_column is not None:
         options["id_column"] = args.id_column
     if args.rules_json:
