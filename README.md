@@ -90,3 +90,7 @@ Seekable caller-owned text and UTF-8 binary CSV streams now receive the same dup
 `--rules-json rules.json` loads custom category-to-keyword lists, matched literally with word-edge checks before built-in fallbacks. Custom rules are bounded to 100 categories and 1,000 keywords of at most 100 characters. JSON duplicate categories are rejected; explanations report distinct matching categories, including any built-in ambiguity.
 
 `--id-column invoice_id` validates non-empty unique IDs after optional date selection and before exports. IDs are read as text to preserve leading zeros; surrounding whitespace is ignored for uniqueness checks. Duplicate rows are rejected, never silently dropped.
+
+CSV paths ending in `.gz`, `.bz2`, or `.xz` are supported without unpacking a separate file. Header validation reads the same compression format as pandas and still rejects duplicate columns, including BOM-prefixed quoted headers and alternate delimiters. Archive containers such as ZIP/TAR are outside this feature.
+
+`--custom-rules-only --rules-json taxonomy.json` disables built-in fallback categories for workflows with a strict custom taxonomy. Non-empty custom rules are required; unmatched descriptions remain Miscellaneous and are still eligible for manual review.
