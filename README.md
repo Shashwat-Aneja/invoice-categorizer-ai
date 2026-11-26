@@ -94,3 +94,5 @@ Seekable caller-owned text and UTF-8 binary CSV streams now receive the same dup
 CSV paths ending in `.gz`, `.bz2`, or `.xz` are supported without unpacking a separate file. Header validation reads the same compression format as pandas and still rejects duplicate columns, including BOM-prefixed quoted headers and alternate delimiters. Archive containers such as ZIP/TAR are outside this feature.
 
 `--custom-rules-only --rules-json taxonomy.json` disables built-in fallback categories for workflows with a strict custom taxonomy. Non-empty custom rules are required; unmatched descriptions remain Miscellaneous and are still eligible for manual review.
+
+Corrupt compressed bodies, invalid DEFLATE blocks and header-parser limit failures use the normal validation-error path rather than escaping as EOFError, zlib.error or csv.Error. Header inspection restores caller stream position/ownership on these failures. No invalid input is exported.
