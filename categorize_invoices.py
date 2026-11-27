@@ -179,7 +179,8 @@ def explain_category(description, rules=None):
     matches = list(dict.fromkeys(category for category, pattern in (CATEGORY_RULES if rules is None else rules) if pattern.search(text)))
     return {"category": matches[0] if matches else "Miscellaneous",
             "matching_categories": matches,
-            "needs_review": len(matches) != 1}
+            "needs_review": len(matches) != 1,
+            "review_reason": "unmatched" if not matches else ("multiple_categories" if len(matches) > 1 else "none")}
 
 
 def summarize_categories(df):
@@ -300,7 +301,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
         rules = build_category_rules(custom_rules, include_defaults=not custom_rules_only)
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
-        if id_column is not None and (not isinstance(id_column, str) or not id_column.strip() or id_column in {amount_column, "category", "matching_categories", "needs_review"}):
+        if id_column is not None and (not isinstance(id_column, str) or not id_column.strip() or id_column in {amount_column, "category", "matching_categories", "needs_review", "review_reason"}):
             raise ValueError("Invoice ID column must be a distinct source identifier column.")
         dtypes = {amount_column: "string"} if amount_column else {}
         converters = {id_column: lambda value: "__id__" + value} if id_column is not None else None
@@ -323,14 +324,17 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             identifiers = df[id_column].str.strip()
             if identifiers.isna().any() or identifiers.eq("").any() or identifiers.duplicated().any():
                 raise ValueError("Selected invoice IDs must be non-empty and unique.")
-        if amount_column in {"category", "matching_categories", "needs_review"}:
+        if amount_column in {"category", "matching_categories", "needs_review", "review_reason"}:
             raise ValueError("Amount column cannot use a generated categorization column name.")
         df = df.copy()
         df["category"] = df["description"].apply(lambda description: categorize(description, rules))
         if explain or review_csv is not None:
+            if "review_reason" in df.columns:
+                raise ValueError("review_reason is reserved for generated diagnostics.")
             explanations = df["description"].apply(lambda description: explain_category(description, rules))
             df["matching_categories"] = explanations.map(lambda item: "; ".join(item["matching_categories"]))
             df["needs_review"] = explanations.map(lambda item: item["needs_review"])
+            df["review_reason"] = explanations.map(lambda item: item["review_reason"])
         amount_totals = summarize_category_amounts(df, amount_column) if amount_column else []
         review_path = Path(review_csv).expanduser().resolve() if review_csv is not None else None
         if review_path is not None:
