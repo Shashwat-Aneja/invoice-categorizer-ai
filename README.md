@@ -102,3 +102,5 @@ Corrupt compressed bodies, invalid DEFLATE blocks and header-parser limit failur
 Use `--max-input-rows 100000` to reject an input file with more than that many data rows before modeling or export. The budget is per file, including comparison/training/scoring inputs, and applies before filtering or aggregation. The default remains unlimited. Values must be integers from 1 to 10,000,000. Only the budget plus one rows are loaded; oversized inputs fail rather than being silently truncated. This is a row limit, not a byte or field-size limit. Python callers can use `max_rows=`.
 
 Explain/review exports include `review_reason`: `unmatched`, `multiple_categories`, or `none`. An existing source column of that name is rejected before export when diagnostics are requested.
+
+Repeat `--category Rent --category Software` to select assigned categories case-insensitively. Filtering precedes amounts and both exports. JSON discloses the categorized population before this selection. Unknown or empty selections fail before writing.

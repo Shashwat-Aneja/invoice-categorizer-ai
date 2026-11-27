@@ -294,10 +294,12 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None, categories=None):
     try:
         if not isinstance(custom_rules_only, bool):
             raise ValueError("custom_rules_only must be a boolean.")
+        if categories is not None and (not isinstance(categories, (list, tuple)) or not categories or any(not isinstance(c, str) or not c.strip() for c in categories)):
+            raise ValueError("categories must be a non-empty list of category names.")
         rules = build_category_rules(custom_rules, include_defaults=not custom_rules_only)
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
@@ -335,6 +337,16 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             df["matching_categories"] = explanations.map(lambda item: "; ".join(item["matching_categories"]))
             df["needs_review"] = explanations.map(lambda item: item["needs_review"])
             df["review_reason"] = explanations.map(lambda item: item["review_reason"])
+        categorized_count = len(df)
+        if categories is not None:
+            known = {name.casefold(): name for name, _ in rules}
+            known["miscellaneous"] = "Miscellaneous"
+            requested = {c.strip().casefold() for c in categories}
+            if not requested.issubset(known):
+                raise ValueError("Unknown category filter.")
+            df = df.loc[df["category"].str.casefold().isin(requested)].copy()
+            if df.empty:
+                raise ValueError("No invoices match the selected categories.")
         amount_totals = summarize_category_amounts(df, amount_column) if amount_column else []
         review_path = Path(review_csv).expanduser().resolve() if review_csv is not None else None
         if review_path is not None:
@@ -368,7 +380,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
 
         if json_output:
             totals = [{**item, "total_amount": format(item["total_amount"], "f")} for item in amount_totals]
-            print(json.dumps({"invoice_count": len(df), "category_counts": summarize_categories(df), "amount_totals": totals}, allow_nan=False))
+            print(json.dumps({**({"categorized_invoice_count": categorized_count} if categories is not None else {}), "invoice_count": len(df), "category_counts": summarize_categories(df), "amount_totals": totals}, allow_nan=False))
             return 0
 
         print("\n===== Invoice Categorization Report =====")
@@ -409,6 +421,7 @@ def main(argv=None):
     parser.add_argument("--id-column", help="Validate unique non-empty identifiers in selected invoices and preserve leading zeros")
     parser.add_argument("--custom-rules-only", action="store_true", help="Use only the categories from --rules-json, with unmatched descriptions Miscellaneous")
     parser.add_argument("--max-input-rows", type=int, help="Reject CSV files exceeding this raw row budget (1..10000000)")
+    parser.add_argument("--category", action="append", help="Select an assigned category; repeat for several")
     args = parser.parse_args(argv)
     if args.max_input_rows is not None and not 1 <= args.max_input_rows <= 10_000_000:
         parser.error("--max-input-rows must be from 1 to 10000000")
@@ -437,6 +450,8 @@ def main(argv=None):
         options["json_output"] = True
     if args.escape_formulas:
         options["escape_formulas"] = True
+    if args.category is not None:
+        options["categories"] = args.category
     if args.max_input_rows is not None:
         options["max_rows"] = args.max_input_rows
     if delimiter != ",":
