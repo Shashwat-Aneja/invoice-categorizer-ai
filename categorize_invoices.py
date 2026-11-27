@@ -29,14 +29,22 @@ CATEGORY_RULES = (
 )
 
 
-def _read_csv_input(csv_file, delimiter=",", **options):
+def _read_csv_input(csv_file, delimiter=",", max_rows=None, **options):
+    if max_rows is not None and (isinstance(max_rows, bool) or not isinstance(max_rows, int) or not 1 <= max_rows <= 10_000_000):
+        raise ValueError("max_rows must be an integer from 1 to 10000000.")
     if delimiter not in (",", ";", "\t", "|"):
         raise ValueError("Unsupported input delimiter.")
+    if max_rows is not None:
+        if "nrows" in options:
+            raise ValueError("Do not combine nrows and max_rows.")
+        options["nrows"] = max_rows + 1
     _reject_duplicate_headers(csv_file, delimiter)
     try:
         frame = pd.read_csv(csv_file, **options, **({"sep": delimiter} if delimiter != "," else {}))
     except (EOFError, lzma.LZMAError, zlib.error, csv.Error) as exc:
         raise ValueError("CSV input is corrupt or incomplete, or its header exceeds parser limits.") from exc
+    if max_rows is not None and len(frame) > max_rows:
+        raise ValueError("CSV input exceeds the configured row limit.")
     return frame
 
 
@@ -285,7 +293,7 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None):
     try:
         if not isinstance(custom_rules_only, bool):
             raise ValueError("custom_rules_only must be a boolean.")
@@ -296,7 +304,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             raise ValueError("Invoice ID column must be a distinct source identifier column.")
         dtypes = {amount_column: "string"} if amount_column else {}
         converters = {id_column: lambda value: "__id__" + value} if id_column is not None else None
-        df = _read_csv_input(csv_file, delimiter, dtype=dtypes or None, converters=converters)
+        df = _read_csv_input(csv_file, delimiter, **({"max_rows": max_rows} if max_rows is not None else {}), dtype=dtypes or None, converters=converters)
         if id_column is not None and id_column in df.columns:
             # Some pandas versions recognize NA after applying converters.
             # A temporary prefix protects literal IDs; it never leaves parsing.
@@ -396,7 +404,10 @@ def main(argv=None):
     parser.add_argument("--rules-json", help="JSON object mapping custom category names to literal keyword lists; custom rules precede built-ins")
     parser.add_argument("--id-column", help="Validate unique non-empty identifiers in selected invoices and preserve leading zeros")
     parser.add_argument("--custom-rules-only", action="store_true", help="Use only the categories from --rules-json, with unmatched descriptions Miscellaneous")
+    parser.add_argument("--max-input-rows", type=int, help="Reject CSV files exceeding this raw row budget (1..10000000)")
     args = parser.parse_args(argv)
+    if args.max_input_rows is not None and not 1 <= args.max_input_rows <= 10_000_000:
+        parser.error("--max-input-rows must be from 1 to 10000000")
     if args.custom_rules_only and not args.rules_json:
         parser.error("--custom-rules-only requires --rules-json")
     delimiter = "\t" if args.delimiter == "tab" else args.delimiter
@@ -422,6 +433,8 @@ def main(argv=None):
         options["json_output"] = True
     if args.escape_formulas:
         options["escape_formulas"] = True
+    if args.max_input_rows is not None:
+        options["max_rows"] = args.max_input_rows
     if delimiter != ",":
         options["delimiter"] = delimiter
     return process_invoice_file(args.csv_file, output_csv=args.output, **options)
