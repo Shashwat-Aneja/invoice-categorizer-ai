@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import zlib
 import gzip
 import bz2
@@ -80,7 +82,7 @@ def _snapshot_csv_input(csv_file, max_bytes, encoding):
     return io.BytesIO(raw)
 
 
-def _read_csv_input(csv_file, delimiter=",", max_rows=None, encoding="utf-8", max_bytes=None, **options):
+def _read_csv_input(csv_file, delimiter=",", max_rows=None, encoding="utf-8", max_bytes=None, expected_sha256=None, **options):
     if encoding not in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
         raise ValueError("Unsupported input encoding.")
     if max_rows is not None and (isinstance(max_rows, bool) or not isinstance(max_rows, int) or not 1 <= max_rows <= 10_000_000):
@@ -91,7 +93,14 @@ def _read_csv_input(csv_file, delimiter=",", max_rows=None, encoding="utf-8", ma
         if "nrows" in options:
             raise ValueError("Do not combine nrows and max_rows.")
         options["nrows"] = max_rows + 1
-    if max_bytes is not None:
+    if expected_sha256 is not None:
+        if not isinstance(expected_sha256, str) or len(expected_sha256) != 64 or any(c not in "0123456789abcdefABCDEF" for c in expected_sha256):
+            raise ValueError("expected_sha256 must be a 64-character hexadecimal digest.")
+        csv_file = _snapshot_csv_input(csv_file, max_bytes if max_bytes is not None else 64 * 1024 * 1024, encoding)
+        actual = hashlib.sha256(csv_file.getbuffer()).hexdigest()
+        if not hmac.compare_digest(actual, expected_sha256.lower()):
+            raise ValueError("CSV input SHA-256 does not match the expected digest.")
+    elif max_bytes is not None:
         csv_file = _snapshot_csv_input(csv_file, max_bytes, encoding)
     _reject_duplicate_headers(csv_file, delimiter, encoding=encoding)
     try:
@@ -349,7 +358,7 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None, categories=None, encoding="utf-8", max_bytes=None):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None, categories=None, encoding="utf-8", max_bytes=None, expected_sha256=None):
     try:
         if not isinstance(custom_rules_only, bool):
             raise ValueError("custom_rules_only must be a boolean.")
@@ -362,7 +371,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             raise ValueError("Invoice ID column must be a distinct source identifier column.")
         dtypes = {amount_column: "string"} if amount_column else {}
         converters = {id_column: lambda value: "__id__" + value} if id_column is not None else None
-        df = _read_csv_input(csv_file, delimiter, **({"max_bytes": max_bytes} if max_bytes is not None else {}), **({"encoding": encoding} if encoding != "utf-8" else {}), **({"max_rows": max_rows} if max_rows is not None else {}), dtype=dtypes or None, converters=converters)
+        df = _read_csv_input(csv_file, delimiter, **({"expected_sha256": expected_sha256} if expected_sha256 is not None else {}), **({"max_bytes": max_bytes} if max_bytes is not None else {}), **({"encoding": encoding} if encoding != "utf-8" else {}), **({"max_rows": max_rows} if max_rows is not None else {}), dtype=dtypes or None, converters=converters)
         if id_column is not None and id_column in df.columns:
             # Some pandas versions recognize NA after applying converters.
             # A temporary prefix protects literal IDs; it never leaves parsing.
@@ -479,6 +488,7 @@ def main(argv=None):
     parser.add_argument("--category", action="append", help="Select an assigned category; repeat for several")
     parser.add_argument("--encoding", choices=("utf-8", "utf-8-sig", "cp1252", "latin-1"), default="utf-8", help="Input CSV text encoding; output encoding remains UTF-8")
     parser.add_argument("--max-input-bytes", type=int, help="Snapshot and bound each decompressed CSV input (1..67108864 bytes)")
+    parser.add_argument("--expect-input-sha256", help="Require the main CSV input to match this SHA-256 of decompressed bytes")
     args = parser.parse_args(argv)
     if args.max_input_bytes is not None and not 1 <= args.max_input_bytes <= 64 * 1024 * 1024:
         parser.error("--max-input-bytes must be from 1 to 67108864")
@@ -515,6 +525,8 @@ def main(argv=None):
         options["encoding"] = args.encoding
     if args.max_input_bytes is not None:
         options["max_bytes"] = args.max_input_bytes
+    if args.expect_input_sha256 is not None:
+        options["expected_sha256"] = args.expect_input_sha256
     if args.max_input_rows is not None:
         options["max_rows"] = args.max_input_rows
     if delimiter != ",":
