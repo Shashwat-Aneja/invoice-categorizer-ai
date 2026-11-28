@@ -29,14 +29,22 @@ CATEGORY_RULES = (
 )
 
 
-def _read_csv_input(csv_file, delimiter=",", **options):
+def _read_csv_input(csv_file, delimiter=",", max_rows=None, **options):
+    if max_rows is not None and (isinstance(max_rows, bool) or not isinstance(max_rows, int) or not 1 <= max_rows <= 10_000_000):
+        raise ValueError("max_rows must be an integer from 1 to 10000000.")
     if delimiter not in (",", ";", "\t", "|"):
         raise ValueError("Unsupported input delimiter.")
+    if max_rows is not None:
+        if "nrows" in options:
+            raise ValueError("Do not combine nrows and max_rows.")
+        options["nrows"] = max_rows + 1
     _reject_duplicate_headers(csv_file, delimiter)
     try:
         frame = pd.read_csv(csv_file, **options, **({"sep": delimiter} if delimiter != "," else {}))
     except (EOFError, lzma.LZMAError, zlib.error, csv.Error) as exc:
         raise ValueError("CSV input is corrupt or incomplete, or its header exceeds parser limits.") from exc
+    if max_rows is not None and len(frame) > max_rows:
+        raise ValueError("CSV input exceeds the configured row limit.")
     return frame
 
 
@@ -171,7 +179,8 @@ def explain_category(description, rules=None):
     matches = list(dict.fromkeys(category for category, pattern in (CATEGORY_RULES if rules is None else rules) if pattern.search(text)))
     return {"category": matches[0] if matches else "Miscellaneous",
             "matching_categories": matches,
-            "needs_review": len(matches) != 1}
+            "needs_review": len(matches) != 1,
+            "review_reason": "unmatched" if not matches else ("multiple_categories" if len(matches) > 1 else "none")}
 
 
 def summarize_categories(df):
@@ -285,18 +294,20 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None, categories=None):
     try:
         if not isinstance(custom_rules_only, bool):
             raise ValueError("custom_rules_only must be a boolean.")
+        if categories is not None and (not isinstance(categories, (list, tuple)) or not categories or any(not isinstance(c, str) or not c.strip() for c in categories)):
+            raise ValueError("categories must be a non-empty list of category names.")
         rules = build_category_rules(custom_rules, include_defaults=not custom_rules_only)
         if not isinstance(max_display_rows, int) or isinstance(max_display_rows, bool) or max_display_rows < 1:
             raise ValueError("max_display_rows must be a positive integer.")
-        if id_column is not None and (not isinstance(id_column, str) or not id_column.strip() or id_column in {amount_column, "category", "matching_categories", "needs_review"}):
+        if id_column is not None and (not isinstance(id_column, str) or not id_column.strip() or id_column in {amount_column, "category", "matching_categories", "needs_review", "review_reason"}):
             raise ValueError("Invoice ID column must be a distinct source identifier column.")
         dtypes = {amount_column: "string"} if amount_column else {}
         converters = {id_column: lambda value: "__id__" + value} if id_column is not None else None
-        df = _read_csv_input(csv_file, delimiter, dtype=dtypes or None, converters=converters)
+        df = _read_csv_input(csv_file, delimiter, **({"max_rows": max_rows} if max_rows is not None else {}), dtype=dtypes or None, converters=converters)
         if id_column is not None and id_column in df.columns:
             # Some pandas versions recognize NA after applying converters.
             # A temporary prefix protects literal IDs; it never leaves parsing.
@@ -315,14 +326,27 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             identifiers = df[id_column].str.strip()
             if identifiers.isna().any() or identifiers.eq("").any() or identifiers.duplicated().any():
                 raise ValueError("Selected invoice IDs must be non-empty and unique.")
-        if amount_column in {"category", "matching_categories", "needs_review"}:
+        if amount_column in {"category", "matching_categories", "needs_review", "review_reason"}:
             raise ValueError("Amount column cannot use a generated categorization column name.")
         df = df.copy()
         df["category"] = df["description"].apply(lambda description: categorize(description, rules))
         if explain or review_csv is not None:
+            if "review_reason" in df.columns:
+                raise ValueError("review_reason is reserved for generated diagnostics.")
             explanations = df["description"].apply(lambda description: explain_category(description, rules))
             df["matching_categories"] = explanations.map(lambda item: "; ".join(item["matching_categories"]))
             df["needs_review"] = explanations.map(lambda item: item["needs_review"])
+            df["review_reason"] = explanations.map(lambda item: item["review_reason"])
+        categorized_count = len(df)
+        if categories is not None:
+            known = {name.casefold(): name for name, _ in rules}
+            known["miscellaneous"] = "Miscellaneous"
+            requested = {c.strip().casefold() for c in categories}
+            if not requested.issubset(known):
+                raise ValueError("Unknown category filter.")
+            df = df.loc[df["category"].str.casefold().isin(requested)].copy()
+            if df.empty:
+                raise ValueError("No invoices match the selected categories.")
         amount_totals = summarize_category_amounts(df, amount_column) if amount_column else []
         review_path = Path(review_csv).expanduser().resolve() if review_csv is not None else None
         if review_path is not None:
@@ -356,7 +380,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
 
         if json_output:
             totals = [{**item, "total_amount": format(item["total_amount"], "f")} for item in amount_totals]
-            print(json.dumps({"invoice_count": len(df), "category_counts": summarize_categories(df), "amount_totals": totals}, allow_nan=False))
+            print(json.dumps({**({"categorized_invoice_count": categorized_count} if categories is not None else {}), "invoice_count": len(df), "category_counts": summarize_categories(df), "amount_totals": totals}, allow_nan=False))
             return 0
 
         print("\n===== Invoice Categorization Report =====")
@@ -396,7 +420,11 @@ def main(argv=None):
     parser.add_argument("--rules-json", help="JSON object mapping custom category names to literal keyword lists; custom rules precede built-ins")
     parser.add_argument("--id-column", help="Validate unique non-empty identifiers in selected invoices and preserve leading zeros")
     parser.add_argument("--custom-rules-only", action="store_true", help="Use only the categories from --rules-json, with unmatched descriptions Miscellaneous")
+    parser.add_argument("--max-input-rows", type=int, help="Reject CSV files exceeding this raw row budget (1..10000000)")
+    parser.add_argument("--category", action="append", help="Select an assigned category; repeat for several")
     args = parser.parse_args(argv)
+    if args.max_input_rows is not None and not 1 <= args.max_input_rows <= 10_000_000:
+        parser.error("--max-input-rows must be from 1 to 10000000")
     if args.custom_rules_only and not args.rules_json:
         parser.error("--custom-rules-only requires --rules-json")
     delimiter = "\t" if args.delimiter == "tab" else args.delimiter
@@ -422,6 +450,10 @@ def main(argv=None):
         options["json_output"] = True
     if args.escape_formulas:
         options["escape_formulas"] = True
+    if args.category is not None:
+        options["categories"] = args.category
+    if args.max_input_rows is not None:
+        options["max_rows"] = args.max_input_rows
     if delimiter != ",":
         options["delimiter"] = delimiter
     return process_invoice_file(args.csv_file, output_csv=args.output, **options)

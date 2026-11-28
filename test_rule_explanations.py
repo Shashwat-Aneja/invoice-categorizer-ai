@@ -4,7 +4,7 @@ from categorize_invoices import explain_category, main
 
 def test_ambiguous_and_unmatched_descriptions_are_flagged():
     result = explain_category("rent and software subscription")
-    assert result == {"category": "Rent", "matching_categories": ["Rent", "Software"], "needs_review": True}
+    assert result == {"category": "Rent", "matching_categories": ["Rent", "Software"], "needs_review": True, "review_reason": "multiple_categories"}
     assert explain_category("monthly salary")["needs_review"] is False
     assert explain_category(None)["needs_review"] is True
 
