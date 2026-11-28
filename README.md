@@ -104,3 +104,5 @@ Use `--max-input-rows 100000` to reject an input file with more than that many d
 Explain/review exports include `review_reason`: `unmatched`, `multiple_categories`, or `none`. An existing source column of that name is rejected before export when diagnostics are requested.
 
 Repeat `--category Rent --category Software` to select assigned categories case-insensitively. Filtering precedes amounts and both exports. JSON discloses the categorized population before this selection. Unknown or empty selections fail before writing.
+
+`--encoding utf-8|utf-8-sig|cp1252|latin-1` explicitly selects CSV input decoding, including compressed files and binary streams. Header validation and data parsing use the same encoding; comparison/training/scoring inputs share it. The default remains UTF-8, and export encoding is unchanged. Text streams are already decoded by their caller.

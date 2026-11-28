@@ -29,7 +29,9 @@ CATEGORY_RULES = (
 )
 
 
-def _read_csv_input(csv_file, delimiter=",", max_rows=None, **options):
+def _read_csv_input(csv_file, delimiter=",", max_rows=None, encoding="utf-8", **options):
+    if encoding not in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
+        raise ValueError("Unsupported input encoding.")
     if max_rows is not None and (isinstance(max_rows, bool) or not isinstance(max_rows, int) or not 1 <= max_rows <= 10_000_000):
         raise ValueError("max_rows must be an integer from 1 to 10000000.")
     if delimiter not in (",", ";", "\t", "|"):
@@ -38,9 +40,9 @@ def _read_csv_input(csv_file, delimiter=",", max_rows=None, **options):
         if "nrows" in options:
             raise ValueError("Do not combine nrows and max_rows.")
         options["nrows"] = max_rows + 1
-    _reject_duplicate_headers(csv_file, delimiter)
+    _reject_duplicate_headers(csv_file, delimiter, encoding=encoding)
     try:
-        frame = pd.read_csv(csv_file, **options, **({"sep": delimiter} if delimiter != "," else {}))
+        frame = pd.read_csv(csv_file, **({"encoding": encoding} if encoding != "utf-8" else {}), **options, **({"sep": delimiter} if delimiter != "," else {}))
     except (EOFError, lzma.LZMAError, zlib.error, csv.Error) as exc:
         raise ValueError("CSV input is corrupt or incomplete, or its header exceeds parser limits.") from exc
     if max_rows is not None and len(frame) > max_rows:
@@ -57,7 +59,7 @@ def escape_csv_formulas(frame):
     return frame.apply(lambda column: column.map(escape))
 
 
-def _reject_duplicate_headers(csv_file, delimiter=","):
+def _reject_duplicate_headers(csv_file, delimiter=",", encoding="utf-8"):
     """Inspect original UTF-8 CSV headers without taking ownership of streams."""
     def header_lines(source):
         # csv.reader needs physical lines even for StringIO objects whose default
@@ -99,7 +101,7 @@ def _reject_duplicate_headers(csv_file, delimiter=","):
             return
         opener = {".gz": gzip.open, ".bz2": bz2.open, ".xz": lzma.open}.get(Path(csv_file).suffix, open)
         try:
-            with opener(csv_file, mode="rt", encoding="utf-8-sig", newline="") as source:
+            with opener(csv_file, mode="rt", encoding=encoding, newline="") as source:
                 headers = next(csv.reader(header_lines(source), delimiter=delimiter), [])
         except (EOFError, lzma.LZMAError, zlib.error, csv.Error) as exc:
             raise ValueError("CSV input is corrupt or incomplete, or its header exceeds parser limits.") from exc
@@ -108,7 +110,7 @@ def _reject_duplicate_headers(csv_file, delimiter=","):
             raise ValueError("CSV streams must be seekable for header validation.")
         position = csv_file.tell()
         binary = isinstance(csv_file.read(0), bytes)
-        source = io.TextIOWrapper(csv_file, encoding="utf-8-sig", newline="") if binary else csv_file
+        source = io.TextIOWrapper(csv_file, encoding=encoding, newline="") if binary else csv_file
         try:
             headers = next(csv.reader(header_lines(source), delimiter=delimiter), [])
         except (EOFError, lzma.LZMAError, zlib.error, csv.Error) as exc:
@@ -294,7 +296,7 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None, categories=None):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None, categories=None, encoding="utf-8"):
     try:
         if not isinstance(custom_rules_only, bool):
             raise ValueError("custom_rules_only must be a boolean.")
@@ -307,7 +309,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             raise ValueError("Invoice ID column must be a distinct source identifier column.")
         dtypes = {amount_column: "string"} if amount_column else {}
         converters = {id_column: lambda value: "__id__" + value} if id_column is not None else None
-        df = _read_csv_input(csv_file, delimiter, **({"max_rows": max_rows} if max_rows is not None else {}), dtype=dtypes or None, converters=converters)
+        df = _read_csv_input(csv_file, delimiter, **({"encoding": encoding} if encoding != "utf-8" else {}), **({"max_rows": max_rows} if max_rows is not None else {}), dtype=dtypes or None, converters=converters)
         if id_column is not None and id_column in df.columns:
             # Some pandas versions recognize NA after applying converters.
             # A temporary prefix protects literal IDs; it never leaves parsing.
@@ -422,6 +424,7 @@ def main(argv=None):
     parser.add_argument("--custom-rules-only", action="store_true", help="Use only the categories from --rules-json, with unmatched descriptions Miscellaneous")
     parser.add_argument("--max-input-rows", type=int, help="Reject CSV files exceeding this raw row budget (1..10000000)")
     parser.add_argument("--category", action="append", help="Select an assigned category; repeat for several")
+    parser.add_argument("--encoding", choices=("utf-8", "utf-8-sig", "cp1252", "latin-1"), default="utf-8", help="Input CSV text encoding; output encoding remains UTF-8")
     args = parser.parse_args(argv)
     if args.max_input_rows is not None and not 1 <= args.max_input_rows <= 10_000_000:
         parser.error("--max-input-rows must be from 1 to 10000000")
@@ -452,6 +455,8 @@ def main(argv=None):
         options["escape_formulas"] = True
     if args.category is not None:
         options["categories"] = args.category
+    if args.encoding != "utf-8":
+        options["encoding"] = args.encoding
     if args.max_input_rows is not None:
         options["max_rows"] = args.max_input_rows
     if delimiter != ",":
