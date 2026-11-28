@@ -29,7 +29,58 @@ CATEGORY_RULES = (
 )
 
 
-def _read_csv_input(csv_file, delimiter=",", max_rows=None, encoding="utf-8", **options):
+def _snapshot_csv_input(csv_file, max_bytes, encoding):
+    """Snapshot bounded decompressed CSV bytes without consuming caller streams."""
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not 1 <= max_bytes <= 64 * 1024 * 1024:
+        raise ValueError("max_bytes must be an integer from 1 to 67108864.")
+    def read_complete(source):
+        chunks = []
+        units = 0
+        kind = None
+        while units <= max_bytes:
+            chunk = source.read(min(65536, max_bytes + 1 - units))
+            if not isinstance(chunk, (str, bytes)):
+                raise ValueError("CSV stream read must return bytes or text.")
+            if kind is not None and type(chunk) is not kind:
+                raise ValueError("CSV stream read type must be consistent.")
+            kind = type(chunk)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            units += len(chunk)
+        # Encode text once so codecs with BOMs do not insert one per chunk.
+        raw = ("".join(chunks).encode(encoding) if kind is str else b"".join(chunks))
+        return raw
+    if isinstance(csv_file, (str, os.PathLike)):
+        path = Path(csv_file)
+        if not path.is_file():
+            raise ValueError("Bounded CSV input must be a local regular file or seekable stream.")
+        opener = {".gz": gzip.open, ".bz2": bz2.open, ".xz": lzma.open}.get(path.suffix.lower(), open)
+        try:
+            with opener(path, "rb") as source:
+                raw = read_complete(source)
+        except (EOFError, lzma.LZMAError, zlib.error) as exc:
+            raise ValueError("CSV input is corrupt or incomplete.") from exc
+    else:
+        if not all(hasattr(csv_file, name) for name in ("read", "seek", "tell")) or (hasattr(csv_file, "seekable") and not csv_file.seekable()):
+            raise ValueError("Bounded CSV streams must be seekable.")
+        position = csv_file.tell()
+        try:
+            raw = read_complete(csv_file)
+        except (EOFError, lzma.LZMAError, zlib.error) as exc:
+            raise ValueError("CSV input is corrupt or incomplete.") from exc
+        finally:
+            csv_file.seek(position)
+        if isinstance(raw, str):
+            raw = raw.encode(encoding)
+        if not isinstance(raw, bytes):
+            raise ValueError("CSV stream read must return bytes or text.")
+    if len(raw) > max_bytes:
+        raise ValueError("CSV input exceeds the configured decompressed byte limit.")
+    return io.BytesIO(raw)
+
+
+def _read_csv_input(csv_file, delimiter=",", max_rows=None, encoding="utf-8", max_bytes=None, **options):
     if encoding not in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
         raise ValueError("Unsupported input encoding.")
     if max_rows is not None and (isinstance(max_rows, bool) or not isinstance(max_rows, int) or not 1 <= max_rows <= 10_000_000):
@@ -40,6 +91,8 @@ def _read_csv_input(csv_file, delimiter=",", max_rows=None, encoding="utf-8", **
         if "nrows" in options:
             raise ValueError("Do not combine nrows and max_rows.")
         options["nrows"] = max_rows + 1
+    if max_bytes is not None:
+        csv_file = _snapshot_csv_input(csv_file, max_bytes, encoding)
     _reject_duplicate_headers(csv_file, delimiter, encoding=encoding)
     try:
         frame = pd.read_csv(csv_file, **({"encoding": encoding} if encoding != "utf-8" else {}), **options, **({"sep": delimiter} if delimiter != "," else {}))
@@ -296,7 +349,7 @@ def filter_invoice_dates(frame, date_column=None, start_date=None, end_date=None
     return result
 
 
-def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None, categories=None, encoding="utf-8"):
+def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=False, max_display_rows=20, json_output=False, escape_formulas=False, delimiter=",", date_column=None, start_date=None, end_date=None, review_csv=None, custom_rules=None, id_column=None, custom_rules_only=False, max_rows=None, categories=None, encoding="utf-8", max_bytes=None):
     try:
         if not isinstance(custom_rules_only, bool):
             raise ValueError("custom_rules_only must be a boolean.")
@@ -309,7 +362,7 @@ def process_invoice_file(csv_file, output_csv=None, amount_column=None, explain=
             raise ValueError("Invoice ID column must be a distinct source identifier column.")
         dtypes = {amount_column: "string"} if amount_column else {}
         converters = {id_column: lambda value: "__id__" + value} if id_column is not None else None
-        df = _read_csv_input(csv_file, delimiter, **({"encoding": encoding} if encoding != "utf-8" else {}), **({"max_rows": max_rows} if max_rows is not None else {}), dtype=dtypes or None, converters=converters)
+        df = _read_csv_input(csv_file, delimiter, **({"max_bytes": max_bytes} if max_bytes is not None else {}), **({"encoding": encoding} if encoding != "utf-8" else {}), **({"max_rows": max_rows} if max_rows is not None else {}), dtype=dtypes or None, converters=converters)
         if id_column is not None and id_column in df.columns:
             # Some pandas versions recognize NA after applying converters.
             # A temporary prefix protects literal IDs; it never leaves parsing.
@@ -425,7 +478,10 @@ def main(argv=None):
     parser.add_argument("--max-input-rows", type=int, help="Reject CSV files exceeding this raw row budget (1..10000000)")
     parser.add_argument("--category", action="append", help="Select an assigned category; repeat for several")
     parser.add_argument("--encoding", choices=("utf-8", "utf-8-sig", "cp1252", "latin-1"), default="utf-8", help="Input CSV text encoding; output encoding remains UTF-8")
+    parser.add_argument("--max-input-bytes", type=int, help="Snapshot and bound each decompressed CSV input (1..67108864 bytes)")
     args = parser.parse_args(argv)
+    if args.max_input_bytes is not None and not 1 <= args.max_input_bytes <= 64 * 1024 * 1024:
+        parser.error("--max-input-bytes must be from 1 to 67108864")
     if args.max_input_rows is not None and not 1 <= args.max_input_rows <= 10_000_000:
         parser.error("--max-input-rows must be from 1 to 10000000")
     if args.custom_rules_only and not args.rules_json:
@@ -457,6 +513,8 @@ def main(argv=None):
         options["categories"] = args.category
     if args.encoding != "utf-8":
         options["encoding"] = args.encoding
+    if args.max_input_bytes is not None:
+        options["max_bytes"] = args.max_input_bytes
     if args.max_input_rows is not None:
         options["max_rows"] = args.max_input_rows
     if delimiter != ",":
